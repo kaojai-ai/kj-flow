@@ -67,50 +67,6 @@ async function isGitHubRemote() {
   const remoteUrl = await getRemoteUrl();
   return remoteUrl.includes("github.com");
 }
-async function getDiff(baseBranch = "main") {
-  try {
-    const { stdout } = await execa2("git", ["diff", baseBranch]);
-    return stdout;
-  } catch {
-    return "";
-  }
-}
-
-// src/utils/openai.ts
-import OpenAI from "openai";
-async function generatePrDetails(diff, specContent) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
-  }
-  const openai = new OpenAI({ apiKey });
-  const prompt = `
-You are a helpful assistant that generates Pull Request titles and summaries.
-Based on the following code diff and the original spec, please generate a concise PR title and a detailed summary.
-
-Spec:
-${specContent}
-
-Diff:
-${diff.substring(0, 1e4)} // Truncate diff to avoid token limits if necessary
-
-Output format (JSON):
-{
-  "title": "PR Title",
-  "summary": "PR Summary in Markdown"
-}
-`;
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [{ role: "user", content: prompt }],
-    response_format: { type: "json_object" }
-  });
-  const content = response.choices[0].message.content;
-  if (!content) {
-    throw new Error("Failed to generate PR details");
-  }
-  return JSON.parse(content);
-}
 
 // src/commands/pr.ts
 import { execa as execa3 } from "execa";
@@ -144,8 +100,37 @@ async function findSpecFile(ticketNumber) {
   }
   return null;
 }
+async function getArtifactsMetadata(ticketNumber) {
+  const specsDir = path2.join(process.cwd(), "specs");
+  try {
+    const years = await fs2.readdir(specsDir);
+    for (const year of years) {
+      const yearPath = path2.join(specsDir, year);
+      const yearStat = await fs2.stat(yearPath);
+      if (!yearStat.isDirectory()) continue;
+      const months = await fs2.readdir(yearPath);
+      for (const month of months) {
+        const monthPath = path2.join(yearPath, month);
+        const monthStat = await fs2.stat(monthPath);
+        if (!monthStat.isDirectory()) continue;
+        const tickets = await fs2.readdir(monthPath);
+        if (tickets.includes(ticketNumber)) {
+          const metadataPath = path2.join(monthPath, ticketNumber, "artifacts", "metadata.json");
+          try {
+            const content = await fs2.readFile(metadataPath, "utf-8");
+            return JSON.parse(content);
+          } catch (e) {
+            return null;
+          }
+        }
+      }
+    }
+  } catch (e) {
+  }
+  return null;
+}
 var prCommand = new Command2("pr").description("Pull Request management");
-prCommand.command("create").description("Create a Pull Request").argument("[ticket-number]", "Ticket number (defaults to current branch)").action(async (ticketNumber) => {
+prCommand.command("create").description("Create a Pull Request").argument("[ticket-number]", "Ticket number (defaults to current branch)").option("--dry-run", "Dry run mode").action(async (ticketNumber, options) => {
   try {
     const currentBranch = await getCurrentBranch();
     const ticket = ticketNumber || currentBranch;
@@ -162,23 +147,31 @@ prCommand.command("create").description("Create a Pull Request").argument("[tick
     } else {
       console.warn(`Warning: Spec file not found for ticket ${ticket}.`);
     }
-    const diff = await getDiff();
-    console.log("Generating PR details with OpenAI...");
-    let title = `feat: ${ticket}`;
-    let summary = "";
-    try {
-      const details = await generatePrDetails(diff, specContent);
-      title = details.title;
-      summary = details.summary;
-    } catch (error) {
-      console.error("Failed to generate PR details with OpenAI, falling back to defaults.");
-      console.error(error);
+    const metadata = await getArtifactsMetadata(ticket);
+    if (!metadata) {
+      console.error(`Error: metadata.json not found for ticket ${ticket}. Please ensure specs/YYYY/MM/${ticket}/artifacts/metadata.json exists.`);
+      process.exit(1);
     }
-    const prBody = `${summary}
+    const { pr_title, pr_summary } = metadata;
+    const title = pr_title || `feat: ${ticket}`;
+    const prBody = `# AI Summary
+${pr_summary}
 
-## User original prompt
+# User Prompt
+${specContent}
 
-${specContent}`;
+# Artifacts
+- [implementation_plan.md](specs/2025/12/${ticket}/artifacts/implementation_plan.md)
+- [walkthrough.md](specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
+    if (options.dryRun) {
+      console.log("--- Dry Run ---");
+      console.log(`Title: ${title}`);
+      console.log(`Body:
+${prBody}`);
+      console.log(`Head: ${currentBranch}`);
+      console.log("Command: gh pr create --title ... --body ... --head ...");
+      return;
+    }
     console.log("Running gh pr create...");
     await execa3("gh", ["pr", "create", "--title", title, "--body", prBody, "--head", currentBranch], { stdio: "inherit" });
   } catch (error) {
