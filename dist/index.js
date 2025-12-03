@@ -93,6 +93,14 @@ async function isGitHubRemote() {
   const remoteUrl = await getRemoteUrl();
   return remoteUrl.includes("github.com");
 }
+async function getRepoInfo() {
+  const remoteUrl = await getRemoteUrl();
+  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/);
+  if (match) {
+    return { owner: match[1], repo: match[2] };
+  }
+  return null;
+}
 
 // src/commands/pr.ts
 var import_execa3 = require("execa");
@@ -181,6 +189,8 @@ prCommand.command("create").description("Create a Pull Request").argument("[tick
     }
     const { pr_title, pr_summary } = metadata;
     const title = pr_title || `feat: ${ticket}`;
+    const repoInfo = await getRepoInfo();
+    const repoUrlPrefix = repoInfo ? `https://github.com/${repoInfo.owner}/${repoInfo.repo}/blob/${ticket}` : "";
     const prBody = `# AI Summary
 ${pr_summary}
 
@@ -188,8 +198,8 @@ ${pr_summary}
 ${specContent}
 
 # Artifacts
-- [implementation_plan.md](specs/2025/12/${ticket}/artifacts/implementation_plan.md)
-- [walkthrough.md](specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
+- [implementation_plan.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/implementation_plan.md)
+- [walkthrough.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
     if (options.dryRun) {
       console.log("--- Dry Run ---");
       console.log(`Title: ${title}`);
