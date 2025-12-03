@@ -3,12 +3,52 @@ import { format } from 'date-fns';
 import path from 'path';
 import fs from 'fs/promises';
 import { execa } from 'execa';
+import { getCurrentBranch, createBranch, checkoutBranch } from '../utils/git';
+import readline from 'readline';
+
+function askQuestion(query: string): Promise<string> {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+
+    return new Promise(resolve => rl.question(query, ans => {
+        rl.close();
+        resolve(ans);
+    }));
+}
 
 export const specCommand = new Command('spec')
     .description('Create a new spec file')
     .argument('<ticket-number>', 'Ticket number')
     .argument('[summary]', 'Summary of the spec')
     .action(async (ticketNumber, summary) => {
+        try {
+            const currentBranch = await getCurrentBranch();
+            const defaultBranches = ['main', 'master', 'dev'];
+
+            if (defaultBranches.includes(currentBranch)) {
+                console.log(`On default branch '${currentBranch}'. Switching to '${ticketNumber}'...`);
+                try {
+                    await createBranch(ticketNumber);
+                } catch {
+                    // Ignore if branch already exists
+                }
+                await checkoutBranch(ticketNumber);
+            } else if (currentBranch !== ticketNumber) {
+                const answer = await askQuestion(`You are on branch '${currentBranch}'. Do you want to create a new branch '${ticketNumber}' from here? (y/N) `);
+                if (answer.toLowerCase() === 'y') {
+                    try {
+                        await createBranch(ticketNumber);
+                    } catch {
+                        // Ignore if branch already exists
+                    }
+                    await checkoutBranch(ticketNumber);
+                }
+            }
+        } catch (error) {
+            console.error('Error handling branch switching:', error);
+        }
         const now = new Date();
         const year = format(now, 'yyyy');
         const month = format(now, 'MM');

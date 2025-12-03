@@ -117,13 +117,15 @@ prCommand.command('create')
             const repoUrlPrefix = repoInfo ? `https://github.com/${repoInfo.owner}/${repoInfo.repo}/blob/${ticket}` : '';
 
             // Append spec content to summary
-            const prBody = `# AI Summary
+            const prBody = `Open Story: ${ticket}
+
+## ✨ AI Summary
 ${pr_summary}
 
-# User Prompt
+## 👨‍💻 User Prompt
 ${specContent}
 
-# Artifacts
+## Artifacts
 - [implementation_plan.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/implementation_plan.md)
 - [walkthrough.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
 
