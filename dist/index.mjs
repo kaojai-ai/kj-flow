@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // src/index.ts
-import { Command as Command3 } from "commander";
+import { Command as Command4 } from "commander";
 import dotenv from "dotenv";
 
 // package.json
@@ -196,10 +196,17 @@ prCommand.command("merge").description("Merge a Pull Request").argument("[ticket
   }
 });
 
+// src/commands/ping.ts
+import { Command as Command3 } from "commander";
+var pingCommand = new Command3("ping").description("Ping the CLI to check if it is alive").action(() => {
+  console.log("pong");
+});
+
 // src/index.ts
 dotenv.config();
-var program = new Command3();
+var program = new Command4();
 program.name("kj").description("Kaojai Flow CLI").version(version);
 program.addCommand(specCommand);
 program.addCommand(prCommand);
+program.addCommand(pingCommand);
 program.parse(process.argv);

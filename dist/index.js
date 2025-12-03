@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/index.ts
-var import_commander3 = require("commander");
+var import_commander4 = require("commander");
 var import_dotenv = __toESM(require("dotenv"));
 
 // package.json
@@ -219,10 +219,17 @@ prCommand.command("merge").description("Merge a Pull Request").argument("[ticket
   }
 });
 
+// src/commands/ping.ts
+var import_commander3 = require("commander");
+var pingCommand = new import_commander3.Command("ping").description("Ping the CLI to check if it is alive").action(() => {
+  console.log("pong");
+});
+
 // src/index.ts
 import_dotenv.default.config();
-var program = new import_commander3.Command();
+var program = new import_commander4.Command();
 program.name("kj").description("Kaojai Flow CLI").version(version);
 program.addCommand(specCommand);
 program.addCommand(prCommand);
+program.addCommand(pingCommand);
 program.parse(process.argv);
