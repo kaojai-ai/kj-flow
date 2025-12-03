@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { getCurrentBranch, isGitHubRemote } from '../utils/git';
+import { getCurrentBranch, isGitHubRemote, getRepoInfo } from '../utils/git';
 import { execa } from 'execa';
 import fs from 'fs/promises';
 import path from 'path';
@@ -93,7 +93,9 @@ prCommand.command('create')
             let specContent = '';
             if (specFile) {
                 console.log(`Found spec file: ${specFile}`);
-                specContent = await fs.readFile(specFile, 'utf-8');
+                const content = await fs.readFile(specFile, 'utf-8');
+                // Strip frontmatter
+                specContent = content.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
             } else {
                 console.warn(`Warning: Spec file not found for ticket ${ticket}.`);
             }
@@ -110,6 +112,10 @@ prCommand.command('create')
             // Generate title and summary
             const title = pr_title || `feat: ${ticket}`;
 
+            // Get repo info for links
+            const repoInfo = await getRepoInfo();
+            const repoUrlPrefix = repoInfo ? `https://github.com/${repoInfo.owner}/${repoInfo.repo}/blob/${ticket}` : '';
+
             // Append spec content to summary
             const prBody = `# AI Summary
 ${pr_summary}
@@ -118,8 +124,8 @@ ${pr_summary}
 ${specContent}
 
 # Artifacts
-- [implementation_plan.md](specs/2025/12/${ticket}/artifacts/implementation_plan.md)
-- [walkthrough.md](specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
+- [implementation_plan.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/implementation_plan.md)
+- [walkthrough.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
 
             if (options.dryRun) {
                 console.log('--- Dry Run ---');

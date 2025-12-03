@@ -50,8 +50,11 @@ var specCommand = new import_commander.Command("spec").description("Create a new
       await import_promises.default.access(filePath);
       console.log(`File already exists: ${filePath}`);
     } catch {
-      await import_promises.default.writeFile(filePath, `# ${ticketNumber}: ${summary || ""}
+      await import_promises.default.writeFile(filePath, `---
+ticket_number: ${ticketNumber}
+---
 
+${summary || ""}
 `);
       console.log(`Created spec file: ${filePath}`);
     }
@@ -89,6 +92,14 @@ async function getRemoteUrl() {
 async function isGitHubRemote() {
   const remoteUrl = await getRemoteUrl();
   return remoteUrl.includes("github.com");
+}
+async function getRepoInfo() {
+  const remoteUrl = await getRemoteUrl();
+  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/);
+  if (match) {
+    return { owner: match[1], repo: match[2] };
+  }
+  return null;
 }
 
 // src/commands/pr.ts
@@ -166,7 +177,8 @@ prCommand.command("create").description("Create a Pull Request").argument("[tick
     let specContent = "";
     if (specFile) {
       console.log(`Found spec file: ${specFile}`);
-      specContent = await import_promises2.default.readFile(specFile, "utf-8");
+      const content = await import_promises2.default.readFile(specFile, "utf-8");
+      specContent = content.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
     } else {
       console.warn(`Warning: Spec file not found for ticket ${ticket}.`);
     }
@@ -177,6 +189,8 @@ prCommand.command("create").description("Create a Pull Request").argument("[tick
     }
     const { pr_title, pr_summary } = metadata;
     const title = pr_title || `feat: ${ticket}`;
+    const repoInfo = await getRepoInfo();
+    const repoUrlPrefix = repoInfo ? `https://github.com/${repoInfo.owner}/${repoInfo.repo}/blob/${ticket}` : "";
     const prBody = `# AI Summary
 ${pr_summary}
 
@@ -184,8 +198,8 @@ ${pr_summary}
 ${specContent}
 
 # Artifacts
-- [implementation_plan.md](specs/2025/12/${ticket}/artifacts/implementation_plan.md)
-- [walkthrough.md](specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
+- [implementation_plan.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/implementation_plan.md)
+- [walkthrough.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
     if (options.dryRun) {
       console.log("--- Dry Run ---");
       console.log(`Title: ${title}`);

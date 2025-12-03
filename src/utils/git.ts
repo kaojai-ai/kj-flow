@@ -27,3 +27,13 @@ export async function getDiff(baseBranch: string = 'main'): Promise<string> {
         return '';
     }
 }
+
+export async function getRepoInfo(): Promise<{ owner: string; repo: string } | null> {
+    const remoteUrl = await getRemoteUrl();
+    // Matches git@github.com:owner/repo.git or https://github.com/owner/repo.git
+    const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/);
+    if (match) {
+        return { owner: match[1], repo: match[2] };
+    }
+    return null;
+}
