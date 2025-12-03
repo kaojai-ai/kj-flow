@@ -27,8 +27,11 @@ var specCommand = new Command("spec").description("Create a new spec file").argu
       await fs.access(filePath);
       console.log(`File already exists: ${filePath}`);
     } catch {
-      await fs.writeFile(filePath, `# ${ticketNumber}: ${summary || ""}
+      await fs.writeFile(filePath, `---
+ticket_number: ${ticketNumber}
+---
 
+${summary || ""}
 `);
       console.log(`Created spec file: ${filePath}`);
     }
@@ -143,7 +146,8 @@ prCommand.command("create").description("Create a Pull Request").argument("[tick
     let specContent = "";
     if (specFile) {
       console.log(`Found spec file: ${specFile}`);
-      specContent = await fs2.readFile(specFile, "utf-8");
+      const content = await fs2.readFile(specFile, "utf-8");
+      specContent = content.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
     } else {
       console.warn(`Warning: Spec file not found for ticket ${ticket}.`);
     }

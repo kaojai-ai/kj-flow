@@ -1,0 +1,4 @@
+{
+    "pr_title": "feat: Implement KJC-402 spec template and frontmatter handling",
+    "pr_summary": "This PR updates the `kj spec` command to include a YAML frontmatter with the ticket number in generated spec files. It also updates `kj pr create` to strip this frontmatter when generating the Pull Request description, ensuring a cleaner user prompt section."
+}

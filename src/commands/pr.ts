@@ -93,7 +93,9 @@ prCommand.command('create')
             let specContent = '';
             if (specFile) {
                 console.log(`Found spec file: ${specFile}`);
-                specContent = await fs.readFile(specFile, 'utf-8');
+                const content = await fs.readFile(specFile, 'utf-8');
+                // Strip frontmatter
+                specContent = content.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
             } else {
                 console.warn(`Warning: Spec file not found for ticket ${ticket}.`);
             }

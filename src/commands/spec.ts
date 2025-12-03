@@ -26,7 +26,12 @@ export const specCommand = new Command('spec')
                 await fs.access(filePath);
                 console.log(`File already exists: ${filePath}`);
             } catch {
-                await fs.writeFile(filePath, `# ${ticketNumber}: ${summary || ''}\n\n`);
+                await fs.writeFile(filePath, `---
+ticket_number: ${ticketNumber}
+---
+
+${summary || ''}
+`);
                 console.log(`Created spec file: ${filePath}`);
             }
 
