@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { getCurrentBranch, isGitHubRemote, getRepoInfo } from '../utils/git';
+import { getCurrentBranch, isGitHubRemote, getRepoInfo, extractTicketFromBranch } from '../utils/git';
 import { execa } from 'execa';
 import fs from 'fs/promises';
 import path from 'path';
@@ -79,7 +79,7 @@ prCommand.command('create')
     .action(async (ticketNumber, options) => {
         try {
             const currentBranch = await getCurrentBranch();
-            const ticket = ticketNumber || currentBranch;
+            const ticket = ticketNumber || extractTicketFromBranch(currentBranch);
 
             if (!await isGitHubRemote()) {
                 console.error('Error: Not a GitHub repository or remote is not configured.');
@@ -140,7 +140,15 @@ ${specContent}
 
             // Create PR using gh cli
             console.log('Running gh pr create...');
-            await execa('gh', ['pr', 'create', '--title', title, '--body', prBody, '--head', currentBranch], { stdio: 'inherit' });
+            const { stdout } = await execa('gh', ['pr', 'create', '--title', title, '--body', prBody, '--head', currentBranch]);
+            console.log(stdout);
+
+            // Extract URL (last line usually)
+            const prUrl = stdout.trim().split('\n').pop();
+            if (prUrl && prUrl.startsWith('http')) {
+                console.log(`Opening ${prUrl}...`);
+                await execa('open', [prUrl]);
+            }
 
         } catch (error) {
             console.error('Error creating PR:', error);

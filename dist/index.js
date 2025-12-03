@@ -28,7 +28,7 @@ var import_commander4 = require("commander");
 var import_dotenv = __toESM(require("dotenv"));
 
 // package.json
-var version = "1.0.3";
+var version = "1.0.4";
 
 // src/commands/spec.ts
 var import_commander = require("commander");
@@ -68,6 +68,10 @@ async function createBranch(branchName) {
 }
 async function checkoutBranch(branchName) {
   await (0, import_execa.execa)("git", ["checkout", branchName]);
+}
+function extractTicketFromBranch(branchName) {
+  const match = branchName.match(/^(.*-.*?)-/);
+  return match ? match[1] : branchName;
 }
 
 // src/commands/spec.ts
@@ -207,7 +211,7 @@ var prCommand = new import_commander2.Command("pr").description("Pull Request ma
 prCommand.command("create").description("Create a Pull Request").argument("[ticket-number]", "Ticket number (defaults to current branch)").option("--dry-run", "Dry run mode").action(async (ticketNumber, options) => {
   try {
     const currentBranch = await getCurrentBranch();
-    const ticket = ticketNumber || currentBranch;
+    const ticket = ticketNumber || extractTicketFromBranch(currentBranch);
     if (!await isGitHubRemote()) {
       console.error("Error: Not a GitHub repository or remote is not configured.");
       process.exit(1);
@@ -231,13 +235,15 @@ prCommand.command("create").description("Create a Pull Request").argument("[tick
     const title = pr_title || `feat: ${ticket}`;
     const repoInfo = await getRepoInfo();
     const repoUrlPrefix = repoInfo ? `https://github.com/${repoInfo.owner}/${repoInfo.repo}/blob/${ticket}` : "";
-    const prBody = `# AI Summary
+    const prBody = `Open Story: ${ticket}
+
+## \u2728 AI Summary
 ${pr_summary}
 
-# User Prompt
+## \u{1F468}\u200D\u{1F4BB} User Prompt
 ${specContent}
 
-# Artifacts
+## Artifacts
 - [implementation_plan.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/implementation_plan.md)
 - [walkthrough.md](${repoUrlPrefix}/specs/2025/12/${ticket}/artifacts/walkthrough.md)`;
     if (options.dryRun) {
@@ -250,7 +256,13 @@ ${prBody}`);
       return;
     }
     console.log("Running gh pr create...");
-    await (0, import_execa3.execa)("gh", ["pr", "create", "--title", title, "--body", prBody, "--head", currentBranch], { stdio: "inherit" });
+    const { stdout } = await (0, import_execa3.execa)("gh", ["pr", "create", "--title", title, "--body", prBody, "--head", currentBranch]);
+    console.log(stdout);
+    const prUrl = stdout.trim().split("\n").pop();
+    if (prUrl && prUrl.startsWith("http")) {
+      console.log(`Opening ${prUrl}...`);
+      await (0, import_execa3.execa)("open", [prUrl]);
+    }
   } catch (error) {
     console.error("Error creating PR:", error);
     process.exit(1);

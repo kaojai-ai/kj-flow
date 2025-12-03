@@ -45,3 +45,8 @@ export async function createBranch(branchName: string): Promise<void> {
 export async function checkoutBranch(branchName: string): Promise<void> {
     await execa('git', ['checkout', branchName]);
 }
+
+export function extractTicketFromBranch(branchName: string): string {
+    const match = branchName.match(/^(.*-.*?)-/);
+    return match ? match[1] : branchName;
+}
