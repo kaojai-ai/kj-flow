@@ -1,0 +1,4 @@
+{
+  "pr_title": "feat: add kj ping command",
+  "pr_summary": "Adds a temporary `kj ping` command to verify CLI structure and command registration."
+}

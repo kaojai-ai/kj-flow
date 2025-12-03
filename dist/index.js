@@ -221,7 +221,7 @@ prCommand.command("merge").description("Merge a Pull Request").argument("[ticket
 
 // src/commands/ping.ts
 var import_commander3 = require("commander");
-var pingCommand = new import_commander3.Command("ping").description("Ping the CLI to check if it is alive").action(() => {
+var pingCommand = new import_commander3.Command("ping").description("Ping the CLI to check if it is working").action(() => {
   console.log("pong");
 });
 

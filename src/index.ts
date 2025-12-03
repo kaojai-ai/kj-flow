@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { version } from '../package.json';
 import { specCommand } from './commands/spec';
 import { prCommand } from './commands/pr';
+import { pingCommand } from './commands/ping';
 
 dotenv.config();
 
@@ -16,5 +17,6 @@ program
 
 program.addCommand(specCommand);
 program.addCommand(prCommand);
+program.addCommand(pingCommand);
 
 program.parse(process.argv);
