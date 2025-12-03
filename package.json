@@ -1,6 +1,6 @@
 {
-  "name": "kj-flow",
-  "version": "1.0.2",
+  "name": "@kaojai-ai/kj-flow",
+  "version": "1.0.3",
   "description": "",
   "main": "index.js",
   "bin": {
