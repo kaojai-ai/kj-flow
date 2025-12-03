@@ -37,3 +37,11 @@ export async function getRepoInfo(): Promise<{ owner: string; repo: string } | n
     }
     return null;
 }
+
+export async function createBranch(branchName: string): Promise<void> {
+    await execa('git', ['branch', branchName]);
+}
+
+export async function checkoutBranch(branchName: string): Promise<void> {
+    await execa('git', ['checkout', branchName]);
+}

@@ -5,15 +5,84 @@ import { Command as Command4 } from "commander";
 import dotenv from "dotenv";
 
 // package.json
-var version = "1.0.0";
+var version = "1.0.3";
 
 // src/commands/spec.ts
 import { Command } from "commander";
 import { format } from "date-fns";
 import path from "path";
 import fs from "fs/promises";
+import { execa as execa2 } from "execa";
+
+// src/utils/git.ts
 import { execa } from "execa";
+async function getCurrentBranch() {
+  const { stdout } = await execa("git", ["branch", "--show-current"]);
+  return stdout.trim();
+}
+async function getRemoteUrl() {
+  try {
+    const { stdout } = await execa("git", ["remote", "get-url", "origin"]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+async function isGitHubRemote() {
+  const remoteUrl = await getRemoteUrl();
+  return remoteUrl.includes("github.com");
+}
+async function getRepoInfo() {
+  const remoteUrl = await getRemoteUrl();
+  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/);
+  if (match) {
+    return { owner: match[1], repo: match[2] };
+  }
+  return null;
+}
+async function createBranch(branchName) {
+  await execa("git", ["branch", branchName]);
+}
+async function checkoutBranch(branchName) {
+  await execa("git", ["checkout", branchName]);
+}
+
+// src/commands/spec.ts
+import readline from "readline";
+function askQuestion(query) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise((resolve) => rl.question(query, (ans) => {
+    rl.close();
+    resolve(ans);
+  }));
+}
 var specCommand = new Command("spec").description("Create a new spec file").argument("<ticket-number>", "Ticket number").argument("[summary]", "Summary of the spec").action(async (ticketNumber, summary) => {
+  try {
+    const currentBranch = await getCurrentBranch();
+    const defaultBranches = ["main", "master", "dev"];
+    if (defaultBranches.includes(currentBranch)) {
+      console.log(`On default branch '${currentBranch}'. Switching to '${ticketNumber}'...`);
+      try {
+        await createBranch(ticketNumber);
+      } catch {
+      }
+      await checkoutBranch(ticketNumber);
+    } else if (currentBranch !== ticketNumber) {
+      const answer = await askQuestion(`You are on branch '${currentBranch}'. Do you want to create a new branch '${ticketNumber}' from here? (y/N) `);
+      if (answer.toLowerCase() === "y") {
+        try {
+          await createBranch(ticketNumber);
+        } catch {
+        }
+        await checkoutBranch(ticketNumber);
+      }
+    }
+  } catch (error) {
+    console.error("Error handling branch switching:", error);
+  }
   const now = /* @__PURE__ */ new Date();
   const year = format(now, "yyyy");
   const month = format(now, "MM");
@@ -38,7 +107,7 @@ ${summary || ""}
     const ide = process.env.KJ_IDE || "antigravity";
     console.log(`Opening in ${ide}...`);
     try {
-      await execa(ide, [filePath], { stdio: "inherit" });
+      await execa2(ide, [filePath], { stdio: "inherit" });
     } catch (error) {
       console.error(`Failed to open with ${ide}. Please check if it is installed or set KJ_IDE env var.`);
       console.error(error);
@@ -51,35 +120,6 @@ ${summary || ""}
 
 // src/commands/pr.ts
 import { Command as Command2 } from "commander";
-
-// src/utils/git.ts
-import { execa as execa2 } from "execa";
-async function getCurrentBranch() {
-  const { stdout } = await execa2("git", ["branch", "--show-current"]);
-  return stdout.trim();
-}
-async function getRemoteUrl() {
-  try {
-    const { stdout } = await execa2("git", ["remote", "get-url", "origin"]);
-    return stdout.trim();
-  } catch {
-    return "";
-  }
-}
-async function isGitHubRemote() {
-  const remoteUrl = await getRemoteUrl();
-  return remoteUrl.includes("github.com");
-}
-async function getRepoInfo() {
-  const remoteUrl = await getRemoteUrl();
-  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/);
-  if (match) {
-    return { owner: match[1], repo: match[2] };
-  }
-  return null;
-}
-
-// src/commands/pr.ts
 import { execa as execa3 } from "execa";
 import fs2 from "fs/promises";
 import path2 from "path";

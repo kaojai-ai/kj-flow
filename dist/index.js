@@ -28,15 +28,84 @@ var import_commander4 = require("commander");
 var import_dotenv = __toESM(require("dotenv"));
 
 // package.json
-var version = "1.0.0";
+var version = "1.0.3";
 
 // src/commands/spec.ts
 var import_commander = require("commander");
 var import_date_fns = require("date-fns");
 var import_path = __toESM(require("path"));
 var import_promises = __toESM(require("fs/promises"));
+var import_execa2 = require("execa");
+
+// src/utils/git.ts
 var import_execa = require("execa");
+async function getCurrentBranch() {
+  const { stdout } = await (0, import_execa.execa)("git", ["branch", "--show-current"]);
+  return stdout.trim();
+}
+async function getRemoteUrl() {
+  try {
+    const { stdout } = await (0, import_execa.execa)("git", ["remote", "get-url", "origin"]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+async function isGitHubRemote() {
+  const remoteUrl = await getRemoteUrl();
+  return remoteUrl.includes("github.com");
+}
+async function getRepoInfo() {
+  const remoteUrl = await getRemoteUrl();
+  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/);
+  if (match) {
+    return { owner: match[1], repo: match[2] };
+  }
+  return null;
+}
+async function createBranch(branchName) {
+  await (0, import_execa.execa)("git", ["branch", branchName]);
+}
+async function checkoutBranch(branchName) {
+  await (0, import_execa.execa)("git", ["checkout", branchName]);
+}
+
+// src/commands/spec.ts
+var import_readline = __toESM(require("readline"));
+function askQuestion(query) {
+  const rl = import_readline.default.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise((resolve) => rl.question(query, (ans) => {
+    rl.close();
+    resolve(ans);
+  }));
+}
 var specCommand = new import_commander.Command("spec").description("Create a new spec file").argument("<ticket-number>", "Ticket number").argument("[summary]", "Summary of the spec").action(async (ticketNumber, summary) => {
+  try {
+    const currentBranch = await getCurrentBranch();
+    const defaultBranches = ["main", "master", "dev"];
+    if (defaultBranches.includes(currentBranch)) {
+      console.log(`On default branch '${currentBranch}'. Switching to '${ticketNumber}'...`);
+      try {
+        await createBranch(ticketNumber);
+      } catch {
+      }
+      await checkoutBranch(ticketNumber);
+    } else if (currentBranch !== ticketNumber) {
+      const answer = await askQuestion(`You are on branch '${currentBranch}'. Do you want to create a new branch '${ticketNumber}' from here? (y/N) `);
+      if (answer.toLowerCase() === "y") {
+        try {
+          await createBranch(ticketNumber);
+        } catch {
+        }
+        await checkoutBranch(ticketNumber);
+      }
+    }
+  } catch (error) {
+    console.error("Error handling branch switching:", error);
+  }
   const now = /* @__PURE__ */ new Date();
   const year = (0, import_date_fns.format)(now, "yyyy");
   const month = (0, import_date_fns.format)(now, "MM");
@@ -61,7 +130,7 @@ ${summary || ""}
     const ide = process.env.KJ_IDE || "antigravity";
     console.log(`Opening in ${ide}...`);
     try {
-      await (0, import_execa.execa)(ide, [filePath], { stdio: "inherit" });
+      await (0, import_execa2.execa)(ide, [filePath], { stdio: "inherit" });
     } catch (error) {
       console.error(`Failed to open with ${ide}. Please check if it is installed or set KJ_IDE env var.`);
       console.error(error);
@@ -74,35 +143,6 @@ ${summary || ""}
 
 // src/commands/pr.ts
 var import_commander2 = require("commander");
-
-// src/utils/git.ts
-var import_execa2 = require("execa");
-async function getCurrentBranch() {
-  const { stdout } = await (0, import_execa2.execa)("git", ["branch", "--show-current"]);
-  return stdout.trim();
-}
-async function getRemoteUrl() {
-  try {
-    const { stdout } = await (0, import_execa2.execa)("git", ["remote", "get-url", "origin"]);
-    return stdout.trim();
-  } catch {
-    return "";
-  }
-}
-async function isGitHubRemote() {
-  const remoteUrl = await getRemoteUrl();
-  return remoteUrl.includes("github.com");
-}
-async function getRepoInfo() {
-  const remoteUrl = await getRemoteUrl();
-  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/);
-  if (match) {
-    return { owner: match[1], repo: match[2] };
-  }
-  return null;
-}
-
-// src/commands/pr.ts
 var import_execa3 = require("execa");
 var import_promises2 = __toESM(require("fs/promises"));
 var import_path2 = __toESM(require("path"));

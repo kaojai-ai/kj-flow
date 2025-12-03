@@ -1,0 +1,4 @@
+{
+  "pr_title": "feat(spec): auto create branch on kj spec",
+  "pr_summary": "- Implemented automatic branch creation in `kj spec` command.\n- Added `createBranch` and `checkoutBranch` helpers in `src/utils/git.ts`.\n- Added interactive prompt when creating branch from non-default branch."
+}
