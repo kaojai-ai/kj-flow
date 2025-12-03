@@ -1,0 +1,4 @@
+{
+  "pr_title": "feat: KJC-401 Remove OpenAI",
+  "pr_summary": "Removed OpenAI dependency and updated PR creation logic to use metadata.json."
+}
