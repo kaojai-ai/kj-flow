@@ -58,12 +58,23 @@ kj pr create --ticket https://linear.app/TEAM/issue/ABC-123
 ### Prerequisites
 - Node.js 24+
 - Git
-- GitHub CLI authenticated: `gh auth login`
+- GitHub CLI (`gh`) authenticated: `gh auth login`
+- IDE configured with Antigravity (or similar AI assistant)
 
 ### Installation
 ```bash
 npm i -g kj-flow
 ```
+
+## Workflow
+
+1. **Create Branch**: `git checkout -b <ticket_number>`
+2. **Read Spec**: `kj spec <ticket_number>`
+3. **Draft Prompt**: Write your user prompt in the spec file to keep history.
+4. **Implement**: Use your AI assistant (e.g., via `/kj-spec-implement <ticket_number>`) to read the spec, implement changes, and create artifacts.
+5. **Update Spec**: If requirements change, update the spec file and run `kj spec update <ticket_number>`.
+6. **Create PR**: Run `kj pr create`. This will generate a PR with a description including the original prompt, AI implementation plan, and artifacts.
+7. **Merge & Release**: Merge the PR and follow the release process.
 
 ---
 

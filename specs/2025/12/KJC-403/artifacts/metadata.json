@@ -1,0 +1,4 @@
+{
+  "pr_title": "feat(ci): add npm publish workflow and update readme",
+  "pr_summary": "This PR implements a CI/CD workflow to automatically publish the `kj-flow` CLI to npm upon release creation. It also updates the `README.md` to reflect the current workflow and usage instructions, and configures `package.json` to include the necessary files for distribution."
+}
