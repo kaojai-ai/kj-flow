@@ -1,0 +1,8 @@
+# Workspace defaults can live at <workspace>/.kj/repos.toml.
+# User overrides can live at ~/.config/kj-flow/repos.toml.
+
+[repos.frontend]
+dev_command = ["pnpm", "exec", "vite", "--port", "{port}"]
+
+[repos.api]
+dev_command = ["cargo", "run"]
