@@ -95,14 +95,29 @@ back only worktrees and branches created by that invocation.
 files are dirty, or task commits have not been pushed. Local branches are
 retained.
 
+Task creation copies `.env`, `.env.local`, and `.env.development` by default.
+Select a different set of local environment files with repeated `--env-file`
+options; the selection is saved with the task and reused by `task env sync`:
+
+```bash
+kj task create feature-auth --repo frontend \
+  --env-file .env.local --env-file .env.preview
+kj task env sync feature-auth frontend --apply
+```
+
+Only `.env` and `.env.<name>` basenames are accepted. Files must be regular
+files, not symlinks; production and AWS-style environment filenames are
+rejected. Use a development or preview file with non-production credentials.
+
 ## Commands
 
 ```text
 kj init --workspace <path>
 kj --json doctor
+kj env <environment> [-- <command>]
 kj repo list
 
-kj task create <task-id> --repo <repo> [--repo <repo>...]
+kj task create <task-id> --repo <repo> [--repo <repo>...] [--env-file <file>...]
 kj task list
 kj task show <task-id>
 kj task codex <task-id> [--primary <repo>]
@@ -115,6 +130,18 @@ kj task env sync <task-id> <repo> [--apply]
 kj task finish <task-id>
 kj task finish <task-id> --apply
 ```
+
+`kj env local` loads `.env.local` from the current directory and opens an
+interactive subshell. Exit that shell to return to the previous environment.
+Pass a command after `--` to scope the variables to one process:
+
+```bash
+kj env local -- pnpm --filter payroll-scheduler run -- --month 202607
+```
+
+Use `kj env default` for `.env`. Environment files must be regular files;
+symlinks and environment names containing path separators are rejected. KJ Flow
+never prints or persists loaded values.
 
 ## Configuration
 
@@ -149,10 +176,12 @@ kj task start feature-auth api -- cargo run
 
 ## Environment, processes and security
 
-Task creation copies only regular `.env`, `.env.local`, and `.env.development`
-files from canonical repositories. Symlinks, production/AWS filenames, tracked
-destinations and every other filename are skipped. Copies use mode `0600`.
-`task env sync --apply` explicitly refreshes safe untracked destinations.
+Task creation copies only selected regular environment files from canonical
+repositories. Without `--env-file`, the defaults are `.env`, `.env.local`, and
+`.env.development`. Symlinks, production/AWS filenames, tracked destinations
+and every other filename are skipped or rejected. Copies use mode `0600`.
+`task env sync --apply` explicitly refreshes the task's selected untracked
+destinations.
 
 KJ Flow injects `PORT`, `KJ_TASK_ID`, and `KJ_REPO` into development processes
 without modifying copied env files. Background processes run in their own

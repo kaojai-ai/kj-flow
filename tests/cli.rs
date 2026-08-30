@@ -9,8 +9,19 @@ fn help_lists_major_capabilities() {
         .assert()
         .success()
         .stdout(predicate::str::contains("doctor"))
+        .stdout(predicate::str::contains("env"))
         .stdout(predicate::str::contains("repo"))
         .stdout(predicate::str::contains("task"));
+}
+
+#[test]
+fn task_create_help_lists_environment_file_selection() {
+    let mut command = Command::cargo_bin("kj").unwrap();
+    command
+        .args(["task", "create", "feature-auth", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--env-file"));
 }
 
 #[test]
@@ -77,4 +88,47 @@ fn json_rejects_streaming_foreground_commands() {
     assert!(output.stderr.is_empty());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["ok"], false);
+}
+
+#[test]
+fn env_loads_current_directory_file_for_command() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join(".env.local"),
+        "KJ_ENV_TEST=\"loaded value\"\n",
+    )
+    .unwrap();
+    let mut command = Command::cargo_bin("kj").unwrap();
+    command
+        .current_dir(temp.path())
+        .args([
+            "env",
+            "local",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf '%s' \"$KJ_ENV_TEST\"",
+        ])
+        .assert()
+        .success()
+        .stdout("loaded value")
+        .stderr(predicate::str::contains("Loaded .env.local"));
+}
+
+#[test]
+fn env_refuses_symlinked_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.env");
+    std::fs::write(&source, "KJ_ENV_TEST=value\n").unwrap();
+    std::os::unix::fs::symlink(source, temp.path().join(".env.local")).unwrap();
+
+    let mut command = Command::cargo_bin("kj").unwrap();
+    command
+        .current_dir(temp.path())
+        .args(["env", "local", "--", "/bin/true"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "environment file must be a regular file",
+        ));
 }
