@@ -167,6 +167,53 @@ fn copies_only_safe_regular_environment_files() {
 
 #[test]
 #[serial]
+fn selected_environment_files_are_copied_and_reused_for_sync() {
+    let workspace = TestWorkspace::new();
+    let repo = workspace.add_remote_repo("frontend");
+    fs::write(repo.join(".env.local"), "LOCAL=value\n").unwrap();
+    fs::write(repo.join(".env.preview"), "PREVIEW=value\n").unwrap();
+
+    let selected = vec![".env.preview".to_owned()];
+    let created =
+        app::task_create_with_env_files("selected-env", &["frontend".to_owned()], &selected)
+            .unwrap();
+    assert_eq!(
+        created["environment_files"],
+        serde_json::json!([".env.preview"])
+    );
+    let worktree = workspace.path().join("worktrees/selected-env/frontend");
+    assert_eq!(
+        fs::read_to_string(worktree.join(".env.preview")).unwrap(),
+        "PREVIEW=value\n"
+    );
+    assert!(!worktree.join(".env.local").exists());
+
+    fs::write(repo.join(".env.preview"), "PREVIEW=refreshed\n").unwrap();
+    app::task_env_sync("selected-env", "frontend", true).unwrap();
+    assert_eq!(
+        fs::read_to_string(worktree.join(".env.preview")).unwrap(),
+        "PREVIEW=refreshed\n"
+    );
+}
+
+#[test]
+#[serial]
+fn selected_production_environment_files_are_rejected() {
+    let workspace = TestWorkspace::new();
+    workspace.add_remote_repo("frontend");
+
+    let error = app::task_create_with_env_files(
+        "production-env",
+        &["frontend".to_owned()],
+        &[".env.production".to_owned()],
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("production and AWS"));
+    assert!(!workspace.path().join("worktrees/production-env").exists());
+}
+
+#[test]
+#[serial]
 fn finish_refuses_dirty_or_unpushed_work() {
     let workspace = TestWorkspace::new();
     workspace.add_remote_repo("frontend");

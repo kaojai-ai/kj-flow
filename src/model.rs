@@ -3,6 +3,14 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const TASK_SCHEMA_VERSION: u32 = 2;
+pub const DEFAULT_ENV_FILES: [&str; 3] = [".env", ".env.local", ".env.development"];
+
+pub fn default_environment_files() -> Vec<String> {
+    DEFAULT_ENV_FILES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
@@ -57,6 +65,8 @@ pub struct TaskManifest {
     pub id: String,
     pub branch: String,
     pub created_at: u64,
+    #[serde(default = "default_environment_files")]
+    pub environment_files: Vec<String>,
     pub repositories: Vec<TaskRepository>,
     #[serde(default)]
     pub processes: BTreeMap<String, ProcessRecord>,

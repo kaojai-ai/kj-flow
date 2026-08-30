@@ -28,6 +28,13 @@ enum Commands {
     },
     #[command(about = "Check local configuration and dependencies")]
     Doctor,
+    #[command(about = "Load a current-directory environment file")]
+    Env {
+        #[arg(help = "Environment suffix, for example `local` loads `.env.local`")]
+        environment: String,
+        #[arg(last = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
     #[command(subcommand, about = "Discover workspace repositories")]
     Repo(RepoCommands),
     #[command(subcommand, about = "Create and operate isolated tasks")]
@@ -47,6 +54,12 @@ enum TaskCommands {
         task_id: String,
         #[arg(long = "repo", required = true)]
         repositories: Vec<String>,
+        #[arg(
+            long = "env-file",
+            value_name = "FILE",
+            help = "Copy this environment file; repeat to select multiple files (overrides defaults)"
+        )]
+        environment_files: Vec<String>,
     },
     #[command(about = "List managed tasks")]
     List,
@@ -147,12 +160,22 @@ fn execute(cli: Cli) -> Result<Value> {
     match cli.command {
         Commands::Init { workspace } => app::init(workspace),
         Commands::Doctor => Ok(app::doctor()),
+        Commands::Env {
+            environment,
+            command,
+        } => {
+            if json_mode {
+                anyhow::bail!("--json cannot be combined with `env`");
+            }
+            app::env_load(&environment, command)
+        }
         Commands::Repo(RepoCommands::List) => app::repo_list(),
         Commands::Task(task) => match task {
             TaskCommands::Create {
                 task_id,
                 repositories,
-            } => app::task_create(&task_id, &repositories),
+                environment_files,
+            } => app::task_create_with_env_files(&task_id, &repositories, &environment_files),
             TaskCommands::List => app::task_list(),
             TaskCommands::Show { task_id } => app::task_show(&task_id),
             TaskCommands::Codex {

@@ -6,8 +6,8 @@ use crate::git::{
     ensure_branch_available, path_is_tracked, prepare_base, remove_worktree, worktree_clean,
 };
 use crate::model::{
-    DoctorCheck, ProcessRecord, RepoRuntime, RepositoryInfo, RuntimeOverrides, TASK_SCHEMA_VERSION,
-    TaskManifest, TaskRepository, UserConfig,
+    DEFAULT_ENV_FILES, DoctorCheck, ProcessRecord, RepoRuntime, RepositoryInfo, RuntimeOverrides,
+    TASK_SCHEMA_VERSION, TaskManifest, TaskRepository, UserConfig, default_environment_files,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use fs2::FileExt;
@@ -24,7 +24,55 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const SAFE_ENV_FILES: [&str; 3] = [".env", ".env.local", ".env.development"];
+pub fn env_load(environment: &str, command: Vec<String>) -> Result<Value> {
+    if environment.is_empty()
+        || !environment
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        bail!("environment must contain only letters, numbers, hyphens, or underscores");
+    }
+
+    let current_dir = env::current_dir().context("resolve current directory")?;
+    let file_name = if environment == "default" {
+        ".env".to_owned()
+    } else {
+        format!(".env.{environment}")
+    };
+    let env_path = current_dir.join(&file_name);
+    if !regular_file(&env_path) {
+        bail!(
+            "environment file must be a regular file: {}",
+            env_path.display()
+        );
+    }
+
+    let variables = dotenvy::from_path_iter(&env_path)
+        .with_context(|| format!("parse {}", env_path.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("parse {}", env_path.display()))?;
+
+    eprintln!("Loaded {file_name}");
+
+    let error = if command.is_empty() {
+        let shell = env::var_os("SHELL")
+            .filter(|value| Path::new(value).is_absolute())
+            .unwrap_or_else(|| "/bin/sh".into());
+        Command::new(shell)
+            .arg("-i")
+            .current_dir(current_dir)
+            .envs(variables)
+            .exec()
+    } else {
+        Command::new(&command[0])
+            .args(&command[1..])
+            .current_dir(current_dir)
+            .envs(variables)
+            .exec()
+    };
+
+    Err(error).context("launch environment command")
+}
 
 pub fn init(workspace: PathBuf) -> Result<Value> {
     let config = validate_config(UserConfig::new(workspace))?;
@@ -81,7 +129,9 @@ pub fn doctor() -> Value {
                     let env_count = repositories
                         .iter()
                         .flat_map(|repo| {
-                            SAFE_ENV_FILES.iter().map(move |name| repo.path.join(name))
+                            DEFAULT_ENV_FILES
+                                .iter()
+                                .map(move |name| repo.path.join(name))
                         })
                         .filter(|path| regular_file(path))
                         .count();
@@ -177,7 +227,16 @@ pub fn repo_list() -> Result<Value> {
 }
 
 pub fn task_create(task_id: &str, requested_repos: &[String]) -> Result<Value> {
+    task_create_with_env_files(task_id, requested_repos, &[])
+}
+
+pub fn task_create_with_env_files(
+    task_id: &str,
+    requested_repos: &[String],
+    requested_env_files: &[String],
+) -> Result<Value> {
     validate_task_id(task_id)?;
+    let environment_files = resolve_environment_files(requested_env_files)?;
     if requested_repos.is_empty() {
         bail!("at least one --repo is required");
     }
@@ -232,7 +291,7 @@ pub fn task_create(task_id: &str, requested_repos: &[String]) -> Result<Value> {
                 return Err(error);
             }
             created.push((repo.clone(), worktree_path.clone()));
-            copy_safe_env_files(&repo.path, &worktree_path, false)?;
+            copy_env_files(&repo.path, &worktree_path, false, &environment_files)?;
             Ok(TaskRepository {
                 name: repo.name,
                 canonical_path: repo.path,
@@ -258,6 +317,7 @@ pub fn task_create(task_id: &str, requested_repos: &[String]) -> Result<Value> {
         id: task_id.to_owned(),
         branch,
         created_at: now_epoch(),
+        environment_files,
         repositories,
         processes: BTreeMap::new(),
     };
@@ -292,10 +352,20 @@ pub fn task_env_sync(task_id: &str, repo_name: &str, apply: bool) -> Result<Valu
     let _lock = lock_task(&task_root)?;
     let manifest = load_task_manifest(&task_root)?;
     let repo = find_task_repo(&manifest, repo_name)?;
+    let environment_files = resolve_environment_files(&manifest.environment_files)?;
     let files = if apply {
-        copy_safe_env_files(&repo.canonical_path, &repo.worktree_path, true)?
+        copy_env_files(
+            &repo.canonical_path,
+            &repo.worktree_path,
+            true,
+            &environment_files,
+        )?
     } else {
-        preview_env_sync(&repo.canonical_path, &repo.worktree_path)
+        preview_env_sync(
+            &repo.canonical_path,
+            &repo.worktree_path,
+            &environment_files,
+        )
     };
     Ok(json!({
         "task_id": task_id,
@@ -767,6 +837,7 @@ fn task_summary(manifest: &TaskManifest) -> Value {
         "id": manifest.id,
         "branch": manifest.branch,
         "created_at": manifest.created_at,
+        "environment_files": manifest.environment_files,
         "repositories": manifest.repositories,
         "processes": process_status
     })
@@ -857,13 +928,22 @@ fn rollback_created_worktrees(created: &[(RepositoryInfo, PathBuf)], branch: &st
     }
 }
 
-fn copy_safe_env_files(source: &Path, destination: &Path, overwrite: bool) -> Result<Vec<Value>> {
+fn copy_env_files(
+    source: &Path,
+    destination: &Path,
+    overwrite: bool,
+    environment_files: &[String],
+) -> Result<Vec<Value>> {
     let mut results = Vec::new();
-    for name in SAFE_ENV_FILES {
+    for name in environment_files {
         let source_path = source.join(name);
         let target_path = destination.join(name);
         if !regular_file(&source_path) {
             results.push(json!({ "file": name, "status": "source_missing_or_unsafe" }));
+            continue;
+        }
+        if path_is_tracked(destination, name)? {
+            results.push(json!({ "file": name, "status": "kept_tracked" }));
             continue;
         }
         if let Ok(metadata) = fs::symlink_metadata(&target_path) {
@@ -875,10 +955,6 @@ fn copy_safe_env_files(source: &Path, destination: &Path, overwrite: bool) -> Re
                 results.push(json!({ "file": name, "status": "kept_existing" }));
                 continue;
             }
-            if path_is_tracked(destination, name)? {
-                results.push(json!({ "file": name, "status": "kept_tracked" }));
-                continue;
-            }
         }
         fs::copy(&source_path, &target_path).with_context(|| format!("copy local {name}"))?;
         fs::set_permissions(&target_path, fs::Permissions::from_mode(0o600))
@@ -888,8 +964,8 @@ fn copy_safe_env_files(source: &Path, destination: &Path, overwrite: bool) -> Re
     Ok(results)
 }
 
-fn preview_env_sync(source: &Path, destination: &Path) -> Vec<Value> {
-    SAFE_ENV_FILES
+fn preview_env_sync(source: &Path, destination: &Path, environment_files: &[String]) -> Vec<Value> {
+    environment_files
         .iter()
         .map(|name| {
             let source_safe = regular_file(&source.join(name));
@@ -902,6 +978,51 @@ fn preview_env_sync(source: &Path, destination: &Path) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+fn resolve_environment_files(requested: &[String]) -> Result<Vec<String>> {
+    let names = if requested.is_empty() {
+        default_environment_files()
+    } else {
+        requested.to_vec()
+    };
+    let mut seen = BTreeSet::new();
+    let mut resolved = Vec::new();
+    for name in names {
+        validate_environment_file_name(&name)?;
+        if seen.insert(name.clone()) {
+            resolved.push(name);
+        }
+    }
+    Ok(resolved)
+}
+
+fn validate_environment_file_name(name: &str) -> Result<()> {
+    let valid = if name == ".env" {
+        true
+    } else if let Some(suffix) = name.strip_prefix(".env.") {
+        !suffix.is_empty()
+            && suffix
+                .chars()
+                .any(|character| character.is_ascii_alphanumeric())
+            && suffix.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+            })
+    } else {
+        false
+    };
+    if !valid {
+        bail!("environment file must be `.env` or a `.env.<name>` basename: {name}");
+    }
+
+    let reserved = name
+        .to_ascii_lowercase()
+        .split(['.', '-', '_'])
+        .any(|part| matches!(part, "prod" | "production" | "aws"));
+    if reserved {
+        bail!("production and AWS environment files cannot be selected: {name}");
+    }
+    Ok(())
 }
 
 fn regular_file(path: &Path) -> bool {
@@ -1098,6 +1219,7 @@ mod tests {
             id: "feature-auth".to_owned(),
             branch: "codex/feature-auth".to_owned(),
             created_at: 0,
+            environment_files: default_environment_files(),
             repositories: vec![
                 task_repo("zeta", "/tmp/zeta"),
                 task_repo("frontend", "/tmp/frontend"),
