@@ -38,3 +38,6 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked
+
+      - name: Package and install native binary
+        run: make test-installer
