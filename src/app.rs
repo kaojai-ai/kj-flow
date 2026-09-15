@@ -26,8 +26,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SAFE_ENV_FILES: [&str; 3] = [".env", ".env.local", ".env.development"];
 
-pub fn init(workspace: PathBuf) -> Result<Value> {
-    let config = validate_config(UserConfig::new(workspace))?;
+pub fn init(workspace: PathBuf, worktree_root: Option<PathBuf>) -> Result<Value> {
+    let mut config = UserConfig::new(workspace);
+    config.worktree_root = worktree_root;
+    let config = validate_config(config)?;
     fs::create_dir_all(config.worktree_root())
         .with_context(|| format!("create worktree root {}", config.worktree_root().display()))?;
     let path = save_user_config(&config)?;

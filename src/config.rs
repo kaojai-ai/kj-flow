@@ -4,7 +4,7 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub fn config_path() -> Result<PathBuf> {
     if let Some(path) = env::var_os("KJ_CONFIG_PATH") {
@@ -72,6 +72,17 @@ pub fn validate_config(mut config: UserConfig) -> Result<UserConfig> {
             "workspace root must be a non-Git container: {}",
             config.workspace_root.display()
         );
+    }
+    if config.worktree_root.as_ref().is_some_and(|path| {
+        path.is_relative()
+            && path
+                .components()
+                .any(|part| matches!(part, Component::ParentDir))
+    }) {
+        bail!("relative worktree_root must stay inside workspace_root");
+    }
+    if config.worktree_root() == config.workspace_root {
+        bail!("worktree_root must not be the workspace root");
     }
     if config.port_start < 41_000 || config.port_end > 49_999 || config.port_start > config.port_end
     {

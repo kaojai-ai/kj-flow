@@ -6,8 +6,9 @@ behavior; keep this file limited to implementation constraints.
 
 ## Product boundary
 
-- Keep the core generic. Repository-specific commands belong in
-  `<workspace>/.kj/repos.toml` or `~/.config/kj-flow/repos.toml`.
+- Keep the core generic. Repository collections, worktree roots, port ranges,
+  branch prefixes, and repository commands must come from user or workspace
+  configuration, never source defaults.
 - Keep KaoJai/KJ branding, but never embed private infrastructure, credentials,
   customer data, or business contracts.
 - Do not add a hosted service, account requirement, telemetry, or network API

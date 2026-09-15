@@ -25,6 +25,7 @@ impl TestWorkspace {
         let config_path = root.path().join("config.toml");
         let config = UserConfig {
             workspace_root: root.path().to_path_buf(),
+            worktree_root: None,
             port_start: 45_000,
             port_end: 45_100,
             branch_prefix: "codex".to_owned(),
@@ -65,6 +66,35 @@ impl TestWorkspace {
         git(&repo, ["remote", "set-head", "origin", "main"]);
         repo
     }
+}
+
+#[test]
+#[serial]
+fn creates_tasks_in_a_configured_worktree_root() {
+    let workspace = TestWorkspace::new();
+    let configured_root = workspace.path().join("isolated-checkouts");
+    fs::write(
+        &workspace.config_path,
+        toml::to_string(&UserConfig {
+            workspace_root: workspace.path().to_path_buf(),
+            worktree_root: Some(configured_root.clone()),
+            port_start: 45_000,
+            port_end: 45_100,
+            branch_prefix: "agent".to_owned(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    workspace.add_remote_repo("catalog");
+
+    app::task_create("custom-root", &["catalog".to_owned()]).unwrap();
+
+    let worktree = configured_root.join("custom-root/catalog");
+    assert!(worktree.join(".git").exists());
+    assert_eq!(
+        git_stdout(&worktree, ["branch", "--show-current"]),
+        "agent/custom-root"
+    );
 }
 
 impl Drop for TestWorkspace {

@@ -25,6 +25,11 @@ enum Commands {
     Init {
         #[arg(long)]
         workspace: PathBuf,
+        #[arg(
+            long,
+            help = "Optional absolute path or workspace-relative worktree root"
+        )]
+        worktree_root: Option<PathBuf>,
     },
     #[command(about = "Check local configuration and dependencies")]
     Doctor,
@@ -145,7 +150,10 @@ fn main() -> ExitCode {
 fn execute(cli: Cli) -> Result<Value> {
     let json_mode = cli.json;
     match cli.command {
-        Commands::Init { workspace } => app::init(workspace),
+        Commands::Init {
+            workspace,
+            worktree_root,
+        } => app::init(workspace, worktree_root),
         Commands::Doctor => Ok(app::doctor()),
         Commands::Repo(RepoCommands::List) => app::repo_list(),
         Commands::Task(task) => match task {
