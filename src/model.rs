@@ -7,6 +7,8 @@ pub const TASK_SCHEMA_VERSION: u32 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
     pub workspace_root: PathBuf,
+    #[serde(default)]
+    pub worktree_root: Option<PathBuf>,
     #[serde(default = "default_port_start")]
     pub port_start: u16,
     #[serde(default = "default_port_end")]
@@ -19,6 +21,7 @@ impl UserConfig {
     pub fn new(workspace_root: PathBuf) -> Self {
         Self {
             workspace_root,
+            worktree_root: None,
             port_start: default_port_start(),
             port_end: default_port_end(),
             branch_prefix: default_branch_prefix(),
@@ -26,7 +29,11 @@ impl UserConfig {
     }
 
     pub fn worktree_root(&self) -> PathBuf {
-        self.workspace_root.join("worktrees")
+        match &self.worktree_root {
+            Some(path) if path.is_absolute() => path.clone(),
+            Some(path) => self.workspace_root.join(path),
+            None => self.workspace_root.join("worktrees"),
+        }
     }
 }
 

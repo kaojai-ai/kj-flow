@@ -42,22 +42,58 @@ repository keeps its own history, remote, branch and pull request.
 
 ## Platform
 
-KJ Flow currently supports macOS and Linux. It requires Git and Rust 1.85 or
-newer to build. [OpenAI Codex](https://github.com/openai/codex) is optional and
-required only for `kj task codex`.
+KJ Flow currently supports macOS and Linux. It requires Git. Rust 1.85 or
+newer is required only to build from source. [OpenAI Codex](https://github.com/openai/codex)
+is optional and required only for `kj task codex`.
 
 ## Install
+
+### Quick install
+
+Install the latest published binary without `sudo`:
+
+```bash
+curl -fsSL https://github.com/kaojai-ai/kj-flow/releases/latest/download/kj-installer.sh | sh
+```
+
+The installer supports macOS and Linux on ARM64 and x86-64. It downloads the
+matching archive, verifies its SHA-256 checksum, and installs `kj` into
+`~/.local/bin` by default. Set `KJ_INSTALL_DIR` to install elsewhere.
+
+If `~/.local/bin` is not on your `PATH`, add it using your shell's normal
+profile file, then open a new terminal.
+
+### Direct download
+
+Download the archive matching your platform and `kj-checksums.txt` from the
+[latest release](https://github.com/kaojai-ai/kj-flow/releases/latest). Verify
+the archive before extracting it:
+
+```bash
+shasum -a 256 -c kj-checksums.txt --ignore-missing
+tar -xzf kj-<target>.tar.gz
+install -m 755 kj ~/.local/bin/kj
+```
+
+On Linux systems without `shasum`, use `sha256sum -c kj-checksums.txt`.
+
+### Build from source
 
 ```bash
 git clone https://github.com/kaojai-ai/kj-flow.git
 cd kj-flow
 make install-local
+```
 
+`make install-local` builds the current checkout and installs it into
+`~/.local/bin`.
+
+After any installation method:
+
+```bash
 kj init --workspace /path/to/workspace
 kj --json doctor
 ```
-
-`make install-local` installs the `kj` binary into `~/.local/bin`.
 
 Configuration is stored at `~/.config/kj-flow/config.toml`. Override its
 location with `KJ_CONFIG_PATH`, or override the workspace for one command with
@@ -127,6 +163,10 @@ port_end = 49999
 branch_prefix = "codex"
 ```
 
+Use `kj init --workspace /path/to/workspace --worktree-root /path/to/checkouts`
+to keep task worktrees elsewhere. A relative `worktree_root` stays inside the
+workspace; omitting it uses `<workspace>/worktrees`.
+
 KJ Flow infers `pnpm dev` only when a repository has a `package.json`
 containing a `scripts.dev` entry. Repository commands that need explicit port
 arguments can be configured in either:
@@ -149,10 +189,11 @@ kj task start feature-auth api -- cargo run
 
 ## Environment, processes and security
 
-Task creation copies only regular `.env`, `.env.local`, and `.env.development`
-files from canonical repositories. Symlinks, production/AWS filenames, tracked
-destinations and every other filename are skipped. Copies use mode `0600`.
-`task env sync --apply` explicitly refreshes safe untracked destinations.
+Task creation optionally copies safe regular `.env`, `.env.local`, and
+`.env.development` files when they exist in canonical repositories. Symlinks,
+production/AWS filenames, tracked destinations and every other filename are
+skipped. Copies use mode `0600`. `task env sync --apply` explicitly refreshes
+safe untracked destinations.
 
 KJ Flow injects `PORT`, `KJ_TASK_ID`, and `KJ_REPO` into development processes
 without modifying copied env files. Background processes run in their own
