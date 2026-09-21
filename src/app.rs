@@ -107,8 +107,9 @@ pub fn doctor() -> Value {
                         .is_ok_and(|metadata| !metadata.permissions().readonly()),
                 detail: worktree_root.display().to_string(),
             });
-            match list_task_manifests(&config) {
-                Ok(tasks) => {
+            match list_task_states(&config) {
+                Ok(states) => {
+                    let tasks = states.tasks;
                     let stale = tasks
                         .iter()
                         .flat_map(|task| task.processes.values())
@@ -118,10 +119,11 @@ pub fn doctor() -> Value {
                     let pid_state_errors = pid_state.as_ref().copied().unwrap_or(1);
                     checks.push(DoctorCheck {
                         name: "task_state".to_owned(),
-                        ok: stale == 0 && matches!(pid_state, Ok(0)),
+                        ok: states.invalid.is_empty() && stale == 0 && matches!(pid_state, Ok(0)),
                         detail: format!(
-                            "{} tasks, {stale} stale process records, {pid_state_errors} PID state errors",
-                            tasks.len()
+                            "{} tasks, {} invalid manifests, {stale} stale process records, {pid_state_errors} PID state errors",
+                            tasks.len(),
+                            states.invalid.len()
                         ),
                     });
 
@@ -275,9 +277,12 @@ pub fn task_create(task_id: &str, requested_repos: &[String]) -> Result<Value> {
 
 pub fn task_list() -> Result<Value> {
     let config = load_user_config()?;
-    let tasks = list_task_manifests(&config)?;
-    let summaries = tasks.iter().map(task_summary).collect::<Vec<_>>();
-    Ok(json!({ "tasks": summaries }))
+    let states = list_task_states(&config)?;
+    let summaries = states.tasks.iter().map(task_summary).collect::<Vec<_>>();
+    Ok(json!({
+        "tasks": summaries,
+        "invalid_tasks": states.invalid
+    }))
 }
 
 pub fn task_show(task_id: &str) -> Result<Value> {
@@ -628,8 +633,12 @@ fn pid_path(task_root: &Path, repo_name: &str) -> PathBuf {
 fn load_task_manifest(task_root: &Path) -> Result<TaskManifest> {
     let path = task_manifest_path(task_root);
     let contents = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    parse_task_manifest(&path, &contents)
+}
+
+fn parse_task_manifest(path: &Path, contents: &str) -> Result<TaskManifest> {
     let manifest: TaskManifest =
-        toml::from_str(&contents).with_context(|| format!("parse {}", path.display()))?;
+        toml::from_str(contents).with_context(|| format!("parse {}", path.display()))?;
     if manifest.version != TASK_SCHEMA_VERSION {
         bail!(
             "unsupported task schema {} in {}",
@@ -638,6 +647,111 @@ fn load_task_manifest(task_root: &Path) -> Result<TaskManifest> {
         );
     }
     Ok(manifest)
+}
+
+#[derive(Debug)]
+struct TaskStates {
+    tasks: Vec<TaskManifest>,
+    invalid: Vec<InvalidTaskState>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct InvalidTaskState {
+    path: PathBuf,
+    error: String,
+    reserved_ports: Vec<u16>,
+    blocks_port_allocation: bool,
+}
+
+fn list_task_states(config: &UserConfig) -> Result<TaskStates> {
+    let root = config.worktree_root();
+    if !root.is_dir() {
+        return Ok(TaskStates {
+            tasks: Vec::new(),
+            invalid: Vec::new(),
+        });
+    }
+    let mut states = TaskStates {
+        tasks: Vec::new(),
+        invalid: Vec::new(),
+    };
+    for entry in fs::read_dir(&root).with_context(|| format!("read {}", root.display()))? {
+        let entry = entry.context("read task directory entry")?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest_path = task_manifest_path(&path);
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let contents = match fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read {}", manifest_path.display()))
+        {
+            Ok(contents) => contents,
+            Err(error) => {
+                states.invalid.push(InvalidTaskState {
+                    path: manifest_path,
+                    error: error.to_string(),
+                    reserved_ports: Vec::new(),
+                    blocks_port_allocation: true,
+                });
+                continue;
+            }
+        };
+        match parse_task_manifest(&manifest_path, &contents) {
+            Ok(task) => states.tasks.push(task),
+            Err(error) => {
+                states
+                    .invalid
+                    .push(invalid_task_state(&manifest_path, &contents, error, &root))
+            }
+        }
+    }
+    states.tasks.sort_by(|a, b| a.id.cmp(&b.id));
+    states.invalid.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(states)
+}
+
+fn invalid_task_state(
+    path: &Path,
+    contents: &str,
+    error: anyhow::Error,
+    worktree_root: &Path,
+) -> InvalidTaskState {
+    let parsed = toml::from_str::<toml::Value>(contents);
+    let reserved_ports = parsed
+        .as_ref()
+        .ok()
+        .and_then(|value| value.get("repositories"))
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|repository| repository.get("port"))
+        .filter_map(toml::Value::as_integer)
+        .filter_map(|port| u16::try_from(port).ok())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let has_existing_worktree = parsed
+        .as_ref()
+        .ok()
+        .and_then(|value| value.get("repositories"))
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|repository| repository.get("worktree_path"))
+        .filter_map(toml::Value::as_str)
+        .map(Path::new)
+        .filter(|worktree_path| worktree_path.starts_with(worktree_root))
+        .any(Path::exists);
+
+    InvalidTaskState {
+        path: path.to_owned(),
+        error: format!("{error:#}"),
+        reserved_ports,
+        blocks_port_allocation: parsed.is_err() || has_existing_worktree,
+    }
 }
 
 fn save_task_manifest(task_root: &Path, manifest: &TaskManifest) -> Result<()> {
@@ -729,27 +843,6 @@ fn pid_state_error_count(config: &UserConfig, tasks: &[TaskManifest]) -> Result<
     Ok(errors)
 }
 
-fn list_task_manifests(config: &UserConfig) -> Result<Vec<TaskManifest>> {
-    let root = config.worktree_root();
-    if !root.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut tasks = Vec::new();
-    for entry in fs::read_dir(&root).with_context(|| format!("read {}", root.display()))? {
-        let entry = entry.context("read task directory entry")?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let manifest_path = task_manifest_path(&path);
-        if manifest_path.is_file() {
-            tasks.push(load_task_manifest(&path)?);
-        }
-    }
-    tasks.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(tasks)
-}
-
 fn task_summary(manifest: &TaskManifest) -> Value {
     let process_status = manifest
         .processes
@@ -820,9 +913,27 @@ fn lock_workspace(config: &UserConfig) -> Result<File> {
 }
 
 fn allocate_ports(config: &UserConfig, count: usize) -> Result<Vec<u16>> {
-    let used = list_task_manifests(config)?
+    let states = list_task_states(config)?;
+    if let Some(invalid) = states
+        .invalid
+        .iter()
+        .find(|invalid| invalid.blocks_port_allocation)
+    {
+        bail!(
+            "cannot safely allocate ports while task manifest is invalid: {} (run `kj --json task list` for details)",
+            invalid.path.display()
+        );
+    }
+    let used = states
+        .tasks
         .into_iter()
         .flat_map(|task| task.repositories.into_iter().map(|repo| repo.port))
+        .chain(
+            states
+                .invalid
+                .into_iter()
+                .flat_map(|invalid| invalid.reserved_ports),
+        )
         .collect::<BTreeSet<_>>();
     let mut allocated = Vec::new();
     for port in config.port_start..=config.port_end {
@@ -1161,6 +1272,56 @@ mod tests {
         assert_eq!(read_pid_file(&path).unwrap(), 12_345);
         fs::write(&path, "123 command").unwrap();
         assert!(read_pid_file(&path).is_err());
+    }
+
+    #[test]
+    fn invalid_task_manifests_are_reported_with_reserved_ports() {
+        let directory = tempfile::tempdir().unwrap();
+        let task_root = directory.path().join("worktrees/orphaned/.kj");
+        fs::create_dir_all(&task_root).unwrap();
+        fs::write(
+            task_root.join("task.toml"),
+            r#"
+version = 2
+id = "orphaned"
+branch = "codex/orphaned"
+created_at = 1
+
+[[repositories]]
+name = "frontend"
+canonical_path = "/tmp/frontend"
+worktree_path = "/tmp/missing-kj-flow-worktree"
+base_ref = "origin/main"
+base_sha = "unknown"
+port = 45000
+
+[[repositories]]
+name = "contracts"
+canonical_path = "/tmp/contracts"
+worktree_path = "/tmp/missing-kj-flow-contracts"
+base_ref = "origin/main"
+base_sha = "unknown"
+"#,
+        )
+        .unwrap();
+        let config = UserConfig {
+            workspace_root: directory.path().to_path_buf(),
+            worktree_root: None,
+            port_start: 45_000,
+            port_end: 45_100,
+            branch_prefix: "codex".to_owned(),
+        };
+
+        let states = list_task_states(&config).unwrap();
+        assert!(states.tasks.is_empty());
+        assert_eq!(states.invalid.len(), 1);
+        assert_eq!(
+            states.invalid[0].reserved_ports,
+            [45_000],
+            "{}",
+            states.invalid[0].error
+        );
+        assert!(!states.invalid[0].blocks_port_allocation);
     }
 
     fn task_repo(name: &str, path: &str) -> TaskRepository {

@@ -131,6 +131,12 @@ back only worktrees and branches created by that invocation.
 files are dirty, or task commits have not been pushed. Local branches are
 retained.
 
+`task list` continues when it finds an unreadable or older task manifest. Valid
+tasks remain available and the response includes those entries under
+`invalid_tasks`; `doctor` reports the task state as unhealthy. Port allocation
+reserves any ports recoverable from invalid manifests and refuses to proceed if
+one still points at a worktree under the configured task root.
+
 ## Commands
 
 ```text
