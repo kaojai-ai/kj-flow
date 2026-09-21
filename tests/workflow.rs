@@ -97,6 +97,52 @@ fn creates_tasks_in_a_configured_worktree_root() {
     );
 }
 
+#[test]
+#[serial]
+fn orphaned_invalid_task_state_does_not_block_new_task_creation() {
+    let workspace = TestWorkspace::new();
+    workspace.add_remote_repo("frontend");
+    let state = workspace.path().join("worktrees/orphaned/.kj");
+    fs::create_dir_all(&state).unwrap();
+    fs::write(
+        state.join("task.toml"),
+        r#"
+version = 2
+id = "orphaned"
+branch = "codex/orphaned"
+created_at = 1
+
+[[repositories]]
+name = "frontend"
+canonical_path = "/tmp/frontend"
+worktree_path = "/tmp/missing-kj-flow-worktree"
+base_ref = "origin/main"
+base_sha = "unknown"
+port = 45000
+
+[[repositories]]
+name = "contracts"
+canonical_path = "/tmp/contracts"
+worktree_path = "/tmp/missing-kj-flow-contracts"
+base_ref = "origin/main"
+base_sha = "unknown"
+"#,
+    )
+    .unwrap();
+
+    let listed = app::task_list().unwrap();
+    assert_eq!(listed["tasks"].as_array().unwrap().len(), 0);
+    assert_eq!(listed["invalid_tasks"].as_array().unwrap().len(), 1);
+
+    app::task_create("new-task", &["frontend".to_owned()]).unwrap();
+    assert!(
+        workspace
+            .path()
+            .join("worktrees/new-task/frontend/.git")
+            .exists()
+    );
+}
+
 impl Drop for TestWorkspace {
     fn drop(&mut self) {
         let _ = &self.config_path;
