@@ -209,6 +209,78 @@ fn creates_and_finishes_multi_repo_task() {
 
 #[test]
 #[serial]
+fn finish_stops_only_the_supabase_project_owned_by_the_task_worktree() {
+    let workspace = TestWorkspace::new();
+    let repo = workspace.add_remote_repo("contracts");
+    fs::create_dir(repo.join("supabase")).unwrap();
+    fs::write(
+        repo.join("supabase/config.toml"),
+        "project_id = \"test-project\"\n",
+    )
+    .unwrap();
+    git(&repo, ["add", "supabase/config.toml"]);
+    git(&repo, ["commit", "-m", "add supabase config"]);
+    git(&repo, ["push", "origin", "main"]);
+    app::task_create("supabase-task", &["contracts".to_owned()]).unwrap();
+    let worktree = workspace.path().join("worktrees/supabase-task/contracts");
+    let worktree_label = worktree.canonicalize().unwrap();
+
+    let bin = workspace.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    let stop_log = workspace.path().join("supabase-stop.log");
+    let stopped_marker = workspace.path().join("supabase-stopped");
+    let write_fake_docker = |workdir: &Path| {
+        fs::write(
+            bin.join("docker"),
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n  ps) test -f '{}' || printf 'container-1\\n' ;;\n  inspect) printf '%s\\n' '{}' ;;\n  *) exit 2 ;;\nesac\n",
+                stopped_marker.display(),
+                workdir.display()
+            ),
+        )
+        .unwrap();
+    };
+    write_fake_docker(&workspace.path().join("worktrees/foreign/contracts"));
+    fs::write(
+        bin.join("supabase"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ntouch '{}'\n",
+            stop_log.display(),
+            stopped_marker.display()
+        ),
+    )
+    .unwrap();
+    for command in [bin.join("docker"), bin.join("supabase")] {
+        fs::set_permissions(command, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let old_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin.display(), old_path.to_string_lossy());
+    unsafe { std::env::set_var("PATH", path) };
+
+    let error = app::task_finish("supabase-task", false).unwrap_err();
+    assert!(format!("{error:#}").contains("not owned by this worktree"));
+    assert!(!stop_log.exists());
+
+    write_fake_docker(&worktree_label);
+    let preview = app::task_finish("supabase-task", false).unwrap();
+    assert_eq!(
+        preview["actions"][0]["stop_supabase_project"],
+        "test-project"
+    );
+    assert!(!stop_log.exists());
+    app::task_finish("supabase-task", true).unwrap();
+
+    unsafe { std::env::set_var("PATH", old_path) };
+    assert!(
+        fs::read_to_string(stop_log)
+            .unwrap()
+            .contains("stop --project-id test-project --workdir")
+    );
+    assert!(!worktree.exists());
+}
+
+#[test]
+#[serial]
 fn copies_only_safe_regular_environment_files() {
     let workspace = TestWorkspace::new();
     let repo = workspace.add_remote_repo("frontend");

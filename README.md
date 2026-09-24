@@ -129,7 +129,10 @@ back only worktrees and branches created by that invocation.
 
 `task finish --apply` refuses to remove worktrees while processes are recorded,
 files are dirty, or task commits have not been pushed. Local branches are
-retained.
+retained. When a repository has `supabase/config.toml`, it stops that local
+Supabase project only after Docker confirms its containers belong to the exact
+task worktree. If ownership is ambiguous or stopping fails, the worktree stays
+in place. The Supabase CLI and Docker are needed for this check.
 
 `task list` continues when it finds an unreadable or older task manifest. Valid
 tasks remain available and the response includes those entries under

@@ -510,6 +510,7 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
         bail!("task still has PID files; run `kj --json doctor` before finishing");
     }
     let mut actions = Vec::new();
+    let mut supabase_stacks = Vec::new();
     for repo in &manifest.repositories {
         if !worktree_clean(&repo.worktree_path)? {
             bail!("worktree is dirty: {}", repo.worktree_path.display());
@@ -517,14 +518,23 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
         if !commits_are_pushed(&repo.worktree_path, &manifest.branch, &repo.base_sha)? {
             bail!("task commits are not pushed for repository {}", repo.name);
         }
+        let supabase_project = supabase_project_to_stop(&repo.worktree_path)?;
         actions.push(json!({
             "repository": repo.name,
             "remove_worktree": repo.worktree_path,
-            "retain_branch": manifest.branch
+            "retain_branch": manifest.branch,
+            "stop_supabase_project": supabase_project
         }));
+        supabase_stacks.push((repo, supabase_project));
     }
     if apply {
-        for repo in &manifest.repositories {
+        for (repo, project_id) in supabase_stacks {
+            if let Some(project_id) = project_id {
+                stop_supabase_project(&repo.worktree_path, &project_id)?;
+                if supabase_project_to_stop(&repo.worktree_path)?.is_some() {
+                    bail!("Supabase project {project_id} still has containers; worktree was kept");
+                }
+            }
             remove_worktree(&repo.canonical_path, &repo.worktree_path, false)?;
         }
         fs::remove_dir_all(&root)
@@ -535,6 +545,86 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
         "applied": apply,
         "actions": actions
     }))
+}
+
+fn supabase_project_to_stop(worktree_path: &Path) -> Result<Option<String>> {
+    let config_path = worktree_path.join("supabase").join("config.toml");
+    if !config_path.is_file() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(&config_path)
+        .with_context(|| format!("read Supabase config {}", config_path.display()))?;
+    let config: toml::Value = toml::from_str(&contents)
+        .with_context(|| format!("parse Supabase config {}", config_path.display()))?;
+    let project_id = config
+        .get("project_id")
+        .and_then(toml::Value::as_str)
+        .context("Supabase config has no string project_id")?;
+
+    let output = Command::new("docker")
+        .args([
+            "ps",
+            "--all",
+            "--quiet",
+            "--filter",
+            &format!("label=com.supabase.cli.project={project_id}"),
+        ])
+        .output()
+        .context("inspect Docker containers before finishing the task")?;
+    if !output.status.success() {
+        bail!("Docker could not inspect the Supabase project {project_id}");
+    }
+    let container_id_output =
+        String::from_utf8(output.stdout).context("Docker returned non-UTF-8 container IDs")?;
+    let container_ids = container_id_output
+        .lines()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
+    if container_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let expected_workdir = worktree_path
+        .canonicalize()
+        .with_context(|| format!("resolve worktree {}", worktree_path.display()))?;
+    for container_id in container_ids {
+        let output = Command::new("docker")
+            .args([
+                "inspect",
+                "--format",
+                "{{ index .Config.Labels \"com.supabase.cli.workdir\" }}",
+                container_id,
+            ])
+            .output()
+            .with_context(|| format!("inspect Docker container {container_id}"))?;
+        if !output.status.success() {
+            bail!("Docker could not verify ownership of a Supabase container");
+        }
+        let workdir = String::from_utf8(output.stdout)
+            .context("Docker returned non-UTF-8 worktree label")?
+            .trim()
+            .to_owned();
+        if Path::new(&workdir) != expected_workdir.as_path() {
+            bail!(
+                "cannot finish: Supabase project {project_id} has a container not owned by this worktree"
+            );
+        }
+    }
+    Ok(Some(project_id.to_owned()))
+}
+
+fn stop_supabase_project(worktree_path: &Path, project_id: &str) -> Result<()> {
+    let output = Command::new("supabase")
+        .args(["stop", "--project-id", project_id, "--workdir"])
+        .arg(worktree_path)
+        .arg("--yes")
+        .output()
+        .context("stop the task's local Supabase project")?;
+    if !output.status.success() {
+        bail!("Supabase could not stop local project {project_id}; worktree was kept");
+    }
+    Ok(())
 }
 
 pub fn codex_arguments(
