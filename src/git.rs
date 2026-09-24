@@ -41,7 +41,10 @@ pub fn discover_repositories(
             .or_else(|| current_branch(&path))
             .unwrap_or_else(|| "main".to_owned());
         repositories.push(RepositoryInfo {
-            runtime_configured: overrides.repos.contains_key(&name),
+            runtime_configured: overrides
+                .repos
+                .get(&name)
+                .is_some_and(|runtime| !runtime.dev_command.is_empty()),
             name,
             path: canonical,
             origin,

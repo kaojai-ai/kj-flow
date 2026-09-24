@@ -119,11 +119,27 @@ pub fn load_runtime_overrides(workspace: &Path) -> Result<RuntimeOverrides> {
             fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         let overrides: RuntimeOverrides =
             toml::from_str(&contents).with_context(|| format!("parse {}", path.display()))?;
-        merged.repos.extend(overrides.repos);
+        for (name, override_runtime) in overrides.repos {
+            let runtime = merged.repos.entry(name).or_default();
+            if !override_runtime.dev_command.is_empty() {
+                runtime.dev_command = override_runtime.dev_command;
+            }
+            if !override_runtime.cleanup_command.is_empty() {
+                runtime.cleanup_command = override_runtime.cleanup_command;
+            }
+        }
     }
     for (name, runtime) in &merged.repos {
-        if runtime.dev_command.is_empty() || runtime.dev_command[0].is_empty() {
-            bail!("runtime override for {name} has an empty dev_command");
+        if runtime.dev_command.is_empty() && runtime.cleanup_command.is_empty() {
+            bail!("runtime override for {name} has no commands");
+        }
+        if runtime.dev_command.first().is_some_and(String::is_empty)
+            || runtime
+                .cleanup_command
+                .first()
+                .is_some_and(String::is_empty)
+        {
+            bail!("runtime override for {name} has an empty command name");
         }
     }
     Ok(merged)

@@ -86,6 +86,11 @@ enum TaskCommands {
         task_id: String,
         repository: Option<String>,
     },
+    #[command(about = "Run configured task resource cleanup without removing worktrees")]
+    Cleanup {
+        task_id: String,
+        repository: Option<String>,
+    },
     #[command(subcommand, about = "Manage task-local environment files")]
     Env(TaskEnvCommands),
     #[command(about = "Preview or remove completed task worktrees")]
@@ -193,6 +198,10 @@ fn execute(cli: Cli) -> Result<Value> {
                 task_id,
                 repository,
             } => app::task_stop(&task_id, repository.as_deref()),
+            TaskCommands::Cleanup {
+                task_id,
+                repository,
+            } => app::task_cleanup(&task_id, repository.as_deref()),
             TaskCommands::Env(TaskEnvCommands::Sync {
                 task_id,
                 repository,

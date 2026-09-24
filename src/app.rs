@@ -6,7 +6,7 @@ use crate::git::{
     ensure_branch_available, path_is_tracked, prepare_base, remove_worktree, worktree_clean,
 };
 use crate::model::{
-    DoctorCheck, ProcessRecord, RepoRuntime, RepositoryInfo, RuntimeOverrides, TASK_SCHEMA_VERSION,
+    DoctorCheck, ProcessRecord, RepositoryInfo, RuntimeOverrides, TASK_SCHEMA_VERSION,
     TaskManifest, TaskRepository, UserConfig,
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -509,8 +509,8 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
     if !remaining_pid_files.is_empty() {
         bail!("task still has PID files; run `kj --json doctor` before finishing");
     }
+    let overrides = load_runtime_overrides(&config.workspace_root)?;
     let mut actions = Vec::new();
-    let mut supabase_stacks = Vec::new();
     for repo in &manifest.repositories {
         if !worktree_clean(&repo.worktree_path)? {
             bail!("worktree is dirty: {}", repo.worktree_path.display());
@@ -518,23 +518,18 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
         if !commits_are_pushed(&repo.worktree_path, &manifest.branch, &repo.base_sha)? {
             bail!("task commits are not pushed for repository {}", repo.name);
         }
-        let supabase_project = supabase_project_to_stop(&repo.worktree_path)?;
         actions.push(json!({
             "repository": repo.name,
             "remove_worktree": repo.worktree_path,
             "retain_branch": manifest.branch,
-            "stop_supabase_project": supabase_project
+            "run_cleanup": has_cleanup_command(repo, &overrides)
         }));
-        supabase_stacks.push((repo, supabase_project));
     }
     if apply {
-        for (repo, project_id) in supabase_stacks {
-            if let Some(project_id) = project_id {
-                stop_supabase_project(&repo.worktree_path, &project_id)?;
-                if supabase_project_to_stop(&repo.worktree_path)?.is_some() {
-                    bail!("Supabase project {project_id} still has containers; worktree was kept");
-                }
-            }
+        for repo in &manifest.repositories {
+            run_cleanup_command(repo, task_id, &overrides)?;
+        }
+        for repo in &manifest.repositories {
             remove_worktree(&repo.canonical_path, &repo.worktree_path, false)?;
         }
         fs::remove_dir_all(&root)
@@ -547,84 +542,68 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
     }))
 }
 
-fn supabase_project_to_stop(worktree_path: &Path) -> Result<Option<String>> {
-    let config_path = worktree_path.join("supabase").join("config.toml");
-    if !config_path.is_file() {
-        return Ok(None);
-    }
-    let contents = fs::read_to_string(&config_path)
-        .with_context(|| format!("read Supabase config {}", config_path.display()))?;
-    let config: toml::Value = toml::from_str(&contents)
-        .with_context(|| format!("parse Supabase config {}", config_path.display()))?;
-    let project_id = config
-        .get("project_id")
-        .and_then(toml::Value::as_str)
-        .context("Supabase config has no string project_id")?;
-
-    let output = Command::new("docker")
-        .args([
-            "ps",
-            "--all",
-            "--quiet",
-            "--filter",
-            &format!("label=com.supabase.cli.project={project_id}"),
-        ])
-        .output()
-        .context("inspect Docker containers before finishing the task")?;
-    if !output.status.success() {
-        bail!("Docker could not inspect the Supabase project {project_id}");
-    }
-    let container_id_output =
-        String::from_utf8(output.stdout).context("Docker returned non-UTF-8 container IDs")?;
-    let container_ids = container_id_output
-        .lines()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .collect::<Vec<_>>();
-    if container_ids.is_empty() {
-        return Ok(None);
-    }
-
-    let expected_workdir = worktree_path
-        .canonicalize()
-        .with_context(|| format!("resolve worktree {}", worktree_path.display()))?;
-    for container_id in container_ids {
-        let output = Command::new("docker")
-            .args([
-                "inspect",
-                "--format",
-                "{{ index .Config.Labels \"com.supabase.cli.workdir\" }}",
-                container_id,
-            ])
-            .output()
-            .with_context(|| format!("inspect Docker container {container_id}"))?;
-        if !output.status.success() {
-            bail!("Docker could not verify ownership of a Supabase container");
-        }
-        let workdir = String::from_utf8(output.stdout)
-            .context("Docker returned non-UTF-8 worktree label")?
-            .trim()
-            .to_owned();
-        if Path::new(&workdir) != expected_workdir.as_path() {
+pub fn task_cleanup(task_id: &str, repo_name: Option<&str>) -> Result<Value> {
+    validate_task_id(task_id)?;
+    let config = load_user_config()?;
+    let root = task_root(&config, task_id);
+    let _lock = lock_task(&root)?;
+    let manifest = load_task_manifest(&root)?;
+    let overrides = load_runtime_overrides(&config.workspace_root)?;
+    let targets = match repo_name {
+        Some(name) => vec![find_task_repo(&manifest, name)?],
+        None => manifest.repositories.iter().collect(),
+    };
+    for repo in &targets {
+        if manifest.processes.contains_key(&repo.name) {
             bail!(
-                "cannot finish: Supabase project {project_id} has a container not owned by this worktree"
+                "task still has a recorded process for {}; run `kj task stop {task_id}`",
+                repo.name
             );
         }
     }
-    Ok(Some(project_id.to_owned()))
+    let mut cleaned = Vec::new();
+    for repo in targets {
+        cleaned.push(json!({
+            "repository": repo.name,
+            "ran_cleanup": run_cleanup_command(repo, task_id, &overrides)?
+        }));
+    }
+    Ok(json!({ "task_id": task_id, "cleaned": cleaned }))
 }
 
-fn stop_supabase_project(worktree_path: &Path, project_id: &str) -> Result<()> {
-    let output = Command::new("supabase")
-        .args(["stop", "--project-id", project_id, "--workdir"])
-        .arg(worktree_path)
-        .arg("--yes")
-        .output()
-        .context("stop the task's local Supabase project")?;
-    if !output.status.success() {
-        bail!("Supabase could not stop local project {project_id}; worktree was kept");
+fn has_cleanup_command(repo: &TaskRepository, overrides: &RuntimeOverrides) -> bool {
+    overrides
+        .repos
+        .get(&repo.name)
+        .is_some_and(|runtime| !runtime.cleanup_command.is_empty())
+}
+
+fn run_cleanup_command(
+    repo: &TaskRepository,
+    task_id: &str,
+    overrides: &RuntimeOverrides,
+) -> Result<bool> {
+    let Some(runtime) = overrides.repos.get(&repo.name) else {
+        return Ok(false);
+    };
+    if runtime.cleanup_command.is_empty() {
+        return Ok(false);
     }
-    Ok(())
+    let command = runtime
+        .cleanup_command
+        .iter()
+        .map(|part| part.replace("{port}", &repo.port.to_string()))
+        .collect::<Vec<_>>();
+    let output = configured_command(&command, repo, task_id)
+        .output()
+        .with_context(|| format!("run cleanup for {}", repo.name))?;
+    if !output.status.success() {
+        bail!(
+            "cleanup failed for repository {}; worktree was kept",
+            repo.name
+        );
+    }
+    Ok(true)
 }
 
 pub fn codex_arguments(
@@ -1138,8 +1117,12 @@ fn resolve_dev_command(
 ) -> Result<Vec<String>> {
     let command = if !provided.is_empty() {
         provided
-    } else if let Some(RepoRuntime { dev_command }) = overrides.repos.get(&repo.name) {
-        dev_command.clone()
+    } else if let Some(runtime) = overrides
+        .repos
+        .get(&repo.name)
+        .filter(|runtime| !runtime.dev_command.is_empty())
+    {
+        runtime.dev_command.clone()
     } else if has_package_dev_script(&repo.worktree_path)? {
         vec!["pnpm".to_owned(), "dev".to_owned()]
     } else {
@@ -1281,7 +1264,7 @@ pub fn validate_task_id(value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::TaskRepository;
+    use crate::model::{RepoRuntime, TaskRepository};
     use std::net::TcpListener;
 
     #[test]
@@ -1345,6 +1328,7 @@ mod tests {
                         "--port".to_owned(),
                         "{port}".to_owned(),
                     ],
+                    cleanup_command: vec![],
                 },
             )]),
         };

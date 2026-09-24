@@ -92,9 +92,12 @@ pub struct RuntimeOverrides {
     pub repos: BTreeMap<String, RepoRuntime>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct RepoRuntime {
+    #[serde(default)]
     pub dev_command: Vec<String>,
+    #[serde(default)]
+    pub cleanup_command: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
