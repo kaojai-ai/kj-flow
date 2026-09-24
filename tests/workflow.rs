@@ -209,6 +209,35 @@ fn creates_and_finishes_multi_repo_task() {
 
 #[test]
 #[serial]
+fn cleanup_runs_configured_command_before_removing_a_worktree() {
+    let workspace = TestWorkspace::new();
+    let repo = workspace.add_remote_repo("contracts");
+    fs::write(
+        workspace.path().join(".kj/repos.toml"),
+        "[repos.contracts]\ncleanup_command = [\"sh\", \"cleanup.sh\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.join("cleanup.sh"),
+        "#!/bin/sh\nprintf '%s' \"$PORT\" > ../cleaned-port\n",
+    )
+    .unwrap();
+    git(&repo, ["add", "cleanup.sh"]);
+    git(&repo, ["commit", "-m", "add cleanup hook"]);
+    git(&repo, ["push", "origin", "main"]);
+    app::task_create("supabase-task", &["contracts".to_owned()]).unwrap();
+    let worktree = workspace.path().join("worktrees/supabase-task/contracts");
+    let preview = app::task_finish("supabase-task", false).unwrap();
+    assert_eq!(preview["actions"][0]["run_cleanup"], true);
+    assert!(!worktree.parent().unwrap().join("cleaned-port").exists());
+    app::task_cleanup("supabase-task", Some("contracts")).unwrap();
+    assert!(worktree.parent().unwrap().join("cleaned-port").exists());
+    app::task_finish("supabase-task", true).unwrap();
+    assert!(!worktree.exists());
+}
+
+#[test]
+#[serial]
 fn copies_only_safe_regular_environment_files() {
     let workspace = TestWorkspace::new();
     let repo = workspace.add_remote_repo("frontend");

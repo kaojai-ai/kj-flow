@@ -116,6 +116,7 @@ kj task codex feature-auth --primary frontend
 kj task start feature-auth frontend
 kj task logs feature-auth frontend --follow
 kj task stop feature-auth frontend
+kj task cleanup feature-auth frontend
 
 # Preview safety checks, then remove only this task's worktrees.
 kj task finish feature-auth
@@ -129,7 +130,18 @@ back only worktrees and branches created by that invocation.
 
 `task finish --apply` refuses to remove worktrees while processes are recorded,
 files are dirty, or task commits have not been pushed. Local branches are
-retained.
+retained. Configure a repository cleanup command in `.kj/repos.toml` or the
+user's `repos.toml` to release task-owned resources before worktree removal:
+
+```toml
+[repos.db-contracts]
+cleanup_command = ["python3", "scripts/agent-task-db.py", "stop"]
+```
+
+`task cleanup` runs the same hook without removing the worktree, for scheduled
+or manual cleanup. A failing hook prevents `task finish --apply` from removing
+the worktree. Commands run in the repository worktree and receive `PORT`,
+`KJ_TASK_ID`, and `KJ_REPO`.
 
 `task list` continues when it finds an unreadable or older task manifest. Valid
 tasks remain available and the response includes those entries under

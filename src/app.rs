@@ -6,7 +6,7 @@ use crate::git::{
     ensure_branch_available, path_is_tracked, prepare_base, remove_worktree, worktree_clean,
 };
 use crate::model::{
-    DoctorCheck, ProcessRecord, RepoRuntime, RepositoryInfo, RuntimeOverrides, TASK_SCHEMA_VERSION,
+    DoctorCheck, ProcessRecord, RepositoryInfo, RuntimeOverrides, TASK_SCHEMA_VERSION,
     TaskManifest, TaskRepository, UserConfig,
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -509,6 +509,7 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
     if !remaining_pid_files.is_empty() {
         bail!("task still has PID files; run `kj --json doctor` before finishing");
     }
+    let overrides = load_runtime_overrides(&config.workspace_root)?;
     let mut actions = Vec::new();
     for repo in &manifest.repositories {
         if !worktree_clean(&repo.worktree_path)? {
@@ -520,10 +521,14 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
         actions.push(json!({
             "repository": repo.name,
             "remove_worktree": repo.worktree_path,
-            "retain_branch": manifest.branch
+            "retain_branch": manifest.branch,
+            "run_cleanup": has_cleanup_command(repo, &overrides)
         }));
     }
     if apply {
+        for repo in &manifest.repositories {
+            run_cleanup_command(repo, task_id, &overrides)?;
+        }
         for repo in &manifest.repositories {
             remove_worktree(&repo.canonical_path, &repo.worktree_path, false)?;
         }
@@ -535,6 +540,70 @@ pub fn task_finish(task_id: &str, apply: bool) -> Result<Value> {
         "applied": apply,
         "actions": actions
     }))
+}
+
+pub fn task_cleanup(task_id: &str, repo_name: Option<&str>) -> Result<Value> {
+    validate_task_id(task_id)?;
+    let config = load_user_config()?;
+    let root = task_root(&config, task_id);
+    let _lock = lock_task(&root)?;
+    let manifest = load_task_manifest(&root)?;
+    let overrides = load_runtime_overrides(&config.workspace_root)?;
+    let targets = match repo_name {
+        Some(name) => vec![find_task_repo(&manifest, name)?],
+        None => manifest.repositories.iter().collect(),
+    };
+    for repo in &targets {
+        if manifest.processes.contains_key(&repo.name) {
+            bail!(
+                "task still has a recorded process for {}; run `kj task stop {task_id}`",
+                repo.name
+            );
+        }
+    }
+    let mut cleaned = Vec::new();
+    for repo in targets {
+        cleaned.push(json!({
+            "repository": repo.name,
+            "ran_cleanup": run_cleanup_command(repo, task_id, &overrides)?
+        }));
+    }
+    Ok(json!({ "task_id": task_id, "cleaned": cleaned }))
+}
+
+fn has_cleanup_command(repo: &TaskRepository, overrides: &RuntimeOverrides) -> bool {
+    overrides
+        .repos
+        .get(&repo.name)
+        .is_some_and(|runtime| !runtime.cleanup_command.is_empty())
+}
+
+fn run_cleanup_command(
+    repo: &TaskRepository,
+    task_id: &str,
+    overrides: &RuntimeOverrides,
+) -> Result<bool> {
+    let Some(runtime) = overrides.repos.get(&repo.name) else {
+        return Ok(false);
+    };
+    if runtime.cleanup_command.is_empty() {
+        return Ok(false);
+    }
+    let command = runtime
+        .cleanup_command
+        .iter()
+        .map(|part| part.replace("{port}", &repo.port.to_string()))
+        .collect::<Vec<_>>();
+    let output = configured_command(&command, repo, task_id)
+        .output()
+        .with_context(|| format!("run cleanup for {}", repo.name))?;
+    if !output.status.success() {
+        bail!(
+            "cleanup failed for repository {}; worktree was kept",
+            repo.name
+        );
+    }
+    Ok(true)
 }
 
 pub fn codex_arguments(
@@ -1048,8 +1117,12 @@ fn resolve_dev_command(
 ) -> Result<Vec<String>> {
     let command = if !provided.is_empty() {
         provided
-    } else if let Some(RepoRuntime { dev_command }) = overrides.repos.get(&repo.name) {
-        dev_command.clone()
+    } else if let Some(runtime) = overrides
+        .repos
+        .get(&repo.name)
+        .filter(|runtime| !runtime.dev_command.is_empty())
+    {
+        runtime.dev_command.clone()
     } else if has_package_dev_script(&repo.worktree_path)? {
         vec!["pnpm".to_owned(), "dev".to_owned()]
     } else {
@@ -1191,7 +1264,7 @@ pub fn validate_task_id(value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::TaskRepository;
+    use crate::model::{RepoRuntime, TaskRepository};
     use std::net::TcpListener;
 
     #[test]
@@ -1255,6 +1328,7 @@ mod tests {
                         "--port".to_owned(),
                         "{port}".to_owned(),
                     ],
+                    cleanup_command: vec![],
                 },
             )]),
         };
